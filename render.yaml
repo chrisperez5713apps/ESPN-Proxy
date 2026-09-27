@@ -1,0 +1,39 @@
+# Render Blueprint — deploys both league dashboards from this repo.
+# In Render: New → Blueprint → connect this repo. Then enter the secret values
+# (ESPN_S2 / ESPN_SWID) when prompted. No code changes needed per league —
+# each service is configured with env vars below.
+services:
+  # ESPN dashboard — "The Degenerates" (index.html)
+  - type: web
+    name: degenerates-league-manager
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: ESPN_APP_NAME
+        value: The Degenerates
+      - key: DEFAULT_ESPN_LEAGUE_ID
+        value: "605596508"
+      - key: DEFAULT_ESPN_YEAR
+        value: "2026"
+      - key: ESPN_S2
+        sync: false
+      - key: ESPN_SWID
+        sync: false
+
+  # Sleeper dashboard — "The PCB League" (sleeper.html), own money pot/ledger
+  - type: web
+    name: pcb-league-manager
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: SLEEPER_APP_NAME
+        value: The PCB League
+      - key: DEFAULT_SLEEPER_LEAGUE_ID
+        value: "1401687707264024576"
+      # ESPN cookies not needed here, but harmless to leave unset

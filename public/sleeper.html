@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>League Manager — Sleeper</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  ::-webkit-scrollbar { height: 6px; width: 6px; }
+</style>
+<script type="text/javascript" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script type="text/javascript" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+const { useState, useEffect } = React;
+
+function playerLabel(players, pid) {
+  if (!pid || pid === "0") return "Empty";
+  const p = players[pid];
+  if (p && p.full_name) return p.full_name;
+  return `${pid} Defense`; // Sleeper keys defenses by team abbrev, e.g. "DEN"
+}
+function normalizeSlot(slot) {
+  return slot === "DEF" ? "D/ST" : slot;
+}
+
+// ---------- contest pool (one active per week, rotates) ----------
+const CONTEST_POOL = [
+  { id: "hotstart", name: "Hot Start", icon: "🔥", blurb: "Whoever scores the most points this week", type: "TEAM_HIGH", payout: 5 },
+  { id: "boss", name: "Like a Boss", icon: "😎", blurb: "Whoever wins their matchup by the biggest gap", type: "BLOWOUT", payout: 5 },
+  { id: "nailbiter", name: "Nail-Biter", icon: "😬", blurb: "Whoever wins by the smallest gap", type: "CLOSE", payout: 5 },
+  { id: "airraid", name: "Air Raid", icon: "🎯", blurb: "Whoever has the highest-scoring quarterback", type: "POS", position: "QB", payout: 5 },
+  { id: "groundgame", name: "Ground Game", icon: "🏃", blurb: "Whoever has the highest-scoring running back", type: "POS", position: "RB", payout: 5 },
+  { id: "airyards", name: "Air Yards", icon: "🏈", blurb: "Whoever has the highest-scoring receiver", type: "POS", position: "WR", payout: 5 },
+  { id: "biggestloser", name: "Biggest Loser", icon: "📉", blurb: "Highest score among teams that still lost", type: "LOSER_HIGH", payout: 5 },
+  { id: "redzone", name: "Red Zone Threat", icon: "🎪", blurb: "Whoever has the highest-scoring tight end", type: "POS", position: "TE", payout: 5 },
+  { id: "hotflex", name: "Hot Flex", icon: "💪", blurb: "Highest-scoring FLEX starter", type: "FLEX", payout: 5 },
+  { id: "legday", name: "Leg Day", icon: "🦵", blurb: "Whoever has the highest-scoring kicker", type: "POS", position: "K", payout: 5 },
+  { id: "brickwall", name: "Brick Wall", icon: "🧱", blurb: "Whoever has the highest-scoring defense", type: "POS", position: "D/ST", payout: 5 },
+  { id: "grandtheft", name: "Grand Theft", icon: "💰", blurb: "Lowest score that still won the matchup", type: "SNEAKY", payout: 5 },
+  { id: "benchmob", name: "Bench Mob", icon: "🪑", blurb: "Highest-scoring player sitting on the bench", type: "BENCH", payout: 5 },
+  { id: "blackjack", name: "Blackjack", icon: "🃏", blurb: "Player closest to 21 points without going over", type: "BLACKJACK", payout: 5 },
+];
+
+function computeWeekStats(matchups, slotPositions, players, rostersById) {
+  const bestByPos = {};
+  let bestFlex = null;
+  let bestBench = null;
+  let bestBlackjack = null;
+  const matchupPairs = [];
+  const byMatchupId = {};
+
+  matchups.forEach((m) => {
+    const mid = m.matchup_id;
+    byMatchupId[mid] = byMatchupId[mid] || [];
+    byMatchupId[mid].push(m);
+
+    const starters = m.starters || [];
+    const starterPts = m.starters_points || [];
+    const ptsByPlayer = m.players_points || {};
+
+    starters.forEach((pid, i) => {
+      if (!pid || pid === "0") return;
+      const slot = normalizeSlot(slotPositions[i]);
+      const pts = typeof starterPts[i] === "number" ? starterPts[i] : (ptsByPlayer[pid] || 0);
+      const name = playerLabel(players, pid);
+      const entry = { points: pts, rosterId: m.roster_id, playerName: name };
+
+      if (slot && slot !== "BN" && (!bestByPos[slot] || pts > bestByPos[slot].points)) {
+        bestByPos[slot] = entry;
+      }
+      if (slot === "FLEX" && (!bestFlex || pts > bestFlex.points)) bestFlex = entry;
+      if (pts <= 21 && (!bestBlackjack || pts > bestBlackjack.points)) bestBlackjack = entry;
+    });
+
+    // bench: rostered players who didn't start
+    const roster = rostersById[m.roster_id];
+    if (roster) {
+      const started = new Set(starters.filter((p) => p && p !== "0"));
+      (roster.players || []).forEach((pid) => {
+        if (!pid || pid === "0" || started.has(pid)) return;
+        const pts = ptsByPlayer[pid] || 0;
+        if (!bestBench || pts > bestBench.points) {
+          bestBench = { points: pts, rosterId: m.roster_id, playerName: playerLabel(players, pid) };
+        }
+      });
+    }
+  });
+
+  Object.values(byMatchupId).forEach((pair) => {
+    if (pair.length !== 2) return;
+    const [a, b] = pair;
+    if (a.points == null || b.points == null || a.points === b.points) return;
+    const winner = a.points > b.points ? a : b;
+    const loser = a.points > b.points ? b : a;
+    matchupPairs.push({ winner, loser, diff: Math.abs(a.points - b.points) });
+  });
+
+  return { bestByPos, bestFlex, bestBench, bestBlackjack, matchups: matchupPairs };
+}
+
+function pickWinner(stats, contest) {
+  switch (contest.type) {
+    case "POS": {
+      const b = stats.bestByPos[contest.position];
+      return b ? { rosterId: b.rosterId, detail: `${b.playerName} — ${b.points.toFixed(2)} pts` } : null;
+    }
+    case "FLEX":
+      return stats.bestFlex ? { rosterId: stats.bestFlex.rosterId, detail: `${stats.bestFlex.playerName} — ${stats.bestFlex.points.toFixed(2)} pts` } : null;
+    case "BENCH":
+      return stats.bestBench ? { rosterId: stats.bestBench.rosterId, detail: `${stats.bestBench.playerName} — ${stats.bestBench.points.toFixed(2)} pts` } : null;
+    case "BLACKJACK":
+      return stats.bestBlackjack ? { rosterId: stats.bestBlackjack.rosterId, detail: `${stats.bestBlackjack.playerName} — ${stats.bestBlackjack.points.toFixed(2)} pts` } : null;
+    case "TEAM_HIGH": {
+      if (stats.matchups.length === 0) return null;
+      const all = stats.matchups.flatMap((mu) => [mu.winner, mu.loser]);
+      const top = all.reduce((a, b) => (b.points > a.points ? b : a));
+      return { rosterId: top.roster_id, detail: `${top.points.toFixed(2)} pts` };
+    }
+    case "BLOWOUT": {
+      if (stats.matchups.length === 0) return null;
+      const biggest = stats.matchups.reduce((a, b) => (b.diff > a.diff ? b : a));
+      return { rosterId: biggest.winner.roster_id, detail: `won by ${biggest.diff.toFixed(2)}` };
+    }
+    case "CLOSE": {
+      if (stats.matchups.length === 0) return null;
+      const closest = stats.matchups.reduce((a, b) => (b.diff < a.diff ? b : a));
+      return { rosterId: closest.winner.roster_id, detail: `won by ${closest.diff.toFixed(2)}` };
+    }
+    case "SNEAKY": {
+      if (stats.matchups.length === 0) return null;
+      const lowest = stats.matchups.reduce((a, b) => (b.winner.points < a.winner.points ? b : a));
+      return { rosterId: lowest.winner.roster_id, detail: `won with only ${lowest.winner.points.toFixed(2)} pts` };
+    }
+    case "LOSER_HIGH": {
+      if (stats.matchups.length === 0) return null;
+      const best = stats.matchups.reduce((a, b) => (b.loser.points > a.loser.points ? b : a));
+      return { rosterId: best.loser.roster_id, detail: `${best.loser.points.toFixed(2)} pts in a loss` };
+    }
+    default:
+      return null;
+  }
+}
+
+function activeContestForWeek(week) {
+  return CONTEST_POOL[(week - 1) % CONTEST_POOL.length];
+}
+
+const TOKENS = {
+  bg: "#0E1F19", panel: "#16302A", panelAlt: "#1C3A32", border: "#294B41", text: "#F2EFE6",
+  muted: "#B7C8C0", gold: "#E3B94F", red: "#E0705A", teal: "#5FC29E",
+};
+
+const styles = {
+  app: { background: TOKENS.bg, color: TOKENS.text, minHeight: "100vh", fontFamily: "'Inter', sans-serif", padding: "20px 16px 60px", fontSize: 16 },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 18, borderBottom: `1px solid ${TOKENS.border}`, paddingBottom: 16, flexWrap: "wrap", gap: 12, maxWidth: 900, margin: "0 auto 18px" },
+  eyebrow: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.18em", color: TOKENS.teal, marginBottom: 4 },
+  eyebrowSmall: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.12em", color: TOKENS.muted, marginBottom: 10 },
+  h1: { fontFamily: "'Teko', sans-serif", fontWeight: 600, fontSize: 42, margin: 0 },
+  tagline: { color: TOKENS.muted, fontSize: 14, marginTop: 2 },
+  platformNav: { marginTop: 10, fontFamily: "'IBM Plex Mono', monospace", fontSize: 13 },
+  platformLink: { color: TOKENS.teal, textDecoration: "underline", cursor: "pointer" },
+  platformCurrent: { color: TOKENS.text, fontWeight: 600 },
+  potBox: { textAlign: "right" },
+  potLabel: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.14em", color: TOKENS.muted },
+  potNumber: { fontFamily: "'Teko', sans-serif", fontSize: 50, color: TOKENS.gold, lineHeight: 1, fontVariantNumeric: "tabular-nums" },
+  tabs: { display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap", maxWidth: 900, margin: "0 auto 20px" },
+  tabBtn: { fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 15, background: "transparent", border: `1px solid ${TOKENS.border}`, color: TOKENS.muted, padding: "12px 18px", cursor: "pointer", borderRadius: 6, minHeight: 46 },
+  tabBtnActive: { color: TOKENS.bg, background: TOKENS.teal, borderColor: TOKENS.teal },
+  main: { maxWidth: 900, margin: "0 auto" },
+  card: { background: TOKENS.panel, border: `1px solid ${TOKENS.border}`, borderRadius: 8, padding: 20, marginBottom: 16 },
+  helpText: { color: TOKENS.muted, fontSize: 14, lineHeight: 1.5, marginBottom: 16 },
+  row: { display: "flex", alignItems: "center", marginBottom: 12, gap: 12, flexWrap: "wrap" },
+  rowLabel: { width: 190, fontSize: 15, color: TOKENS.muted, flexShrink: 0 },
+  input: { flex: 1, minWidth: 140, background: TOKENS.bg, border: `1px solid ${TOKENS.border}`, color: TOKENS.text, padding: "10px 12px", borderRadius: 4, fontFamily: "'IBM Plex Mono', monospace", fontSize: 15 },
+  smallInput: { width: 64, background: TOKENS.bg, border: `1px solid ${TOKENS.border}`, color: TOKENS.gold, padding: "8px 8px", borderRadius: 4, fontFamily: "'IBM Plex Mono', monospace", fontSize: 15, textAlign: "right" },
+  contestRow: { display: "flex", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${TOKENS.border}`, fontSize: 15 },
+  primaryBtn: { marginTop: 16, background: TOKENS.gold, color: TOKENS.bg, border: "none", padding: "14px 24px", borderRadius: 6, fontFamily: "'Inter', sans-serif", fontWeight: 700, fontSize: 16, cursor: "pointer", minHeight: 48 },
+  secondaryBtn: { background: "transparent", color: TOKENS.teal, border: `1px solid ${TOKENS.teal}`, padding: "12px 20px", borderRadius: 6, fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 14, cursor: "pointer", minHeight: 44 },
+  howItWorks: { textAlign: "center", color: TOKENS.muted, fontSize: 14, maxWidth: 900, margin: "0 auto 18px", lineHeight: 1.5 },
+  error: { marginTop: 12, color: TOKENS.red, fontSize: 14, border: `1px solid ${TOKENS.red}`, borderRadius: 4, padding: 10 },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: 15 },
+  th: { textAlign: "left", color: TOKENS.muted, fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 13, borderBottom: `1px solid ${TOKENS.border}`, padding: "8px 8px" },
+  td: { padding: "12px 8px", borderBottom: `1px solid ${TOKENS.border}`, verticalAlign: "middle" },
+  summaryGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 },
+  summaryTile: { background: TOKENS.panel, border: `1px solid ${TOKENS.border}`, borderRadius: 8, padding: 16 },
+  summaryValue: { fontFamily: "'Teko', sans-serif", fontSize: 30, marginTop: 4 },
+  logo: { width: 32, height: 32, borderRadius: "50%", objectFit: "cover", background: TOKENS.panelAlt, marginRight: 12, verticalAlign: "middle" },
+  logoFallback: { width: 32, height: 32, borderRadius: "50%", background: TOKENS.teal, color: TOKENS.bg, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, marginRight: 12, verticalAlign: "middle" },
+  teamCell: { display: "flex", alignItems: "center" },
+  hero: { background: `linear-gradient(135deg, ${TOKENS.panelAlt}, ${TOKENS.panel})`, border: `1px solid ${TOKENS.gold}`, borderRadius: 10, padding: 26, marginBottom: 20, textAlign: "center" },
+  heroEyebrow: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.16em", color: TOKENS.gold, marginBottom: 6 },
+  heroName: { fontFamily: "'Teko', sans-serif", fontSize: 46, lineHeight: 1, margin: "2px 0 4px" },
+  heroBlurb: { color: TOKENS.muted, fontSize: 15, marginBottom: 16 },
+  heroWinner: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 10 },
+  heroWinnerName: { fontFamily: "'Teko', sans-serif", fontSize: 32 },
+  heroDetail: { color: TOKENS.muted, fontSize: 14, marginTop: 2 },
+  heroAmount: { fontFamily: "'IBM Plex Mono', monospace", color: TOKENS.teal, fontSize: 17, marginTop: 8, fontWeight: 600 },
+  historyRow: { display: "flex", alignItems: "center", padding: "12px 4px", borderBottom: `1px solid ${TOKENS.border}`, fontSize: 14, gap: 10 },
+  weekBadge: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: TOKENS.muted, width: 50, flexShrink: 0 },
+  medal: { fontSize: 18, marginRight: 6 },
+};
+
+function TeamCell({ name, avatar }) {
+  const initials = (name || "?").split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  return (
+    <span style={styles.teamCell}>
+      {avatar ? <img src={avatar} style={styles.logo} /> : <span style={styles.logoFallback}>{initials}</span>}
+      {name}
+    </span>
+  );
+}
+function Row({ label, children }) {
+  return <div style={styles.row}><label style={styles.rowLabel}>{label}</label>{children}</div>;
+}
+function SummaryTile({ label, value, accent }) {
+  return (
+    <div style={{ ...styles.summaryTile, ...(accent ? { borderColor: TOKENS.gold } : {}) }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: TOKENS.muted }}>{label}</div>
+      <div style={{ ...styles.summaryValue, ...(accent ? { color: TOKENS.gold } : {}) }}>{value}</div>
+    </div>
+  );
+}
+function Empty({ text }) {
+  return <div style={{ color: TOKENS.muted, fontSize: 14, padding: "12px 0" }}>{text}</div>;
+}
+
+function SleeperDashboard() {
+  const [config, setConfig] = useState({});
+  const [leagueId, setLeagueId] = useState(localStorage.getItem("sleeperLeagueId") || "");
+  const [weeks, setWeeks] = useState(14);
+  const [buyIn, setBuyIn] = useState(20);
+  const [contestPool, setContestPool] = useState(CONTEST_POOL);
+  const [firstPlacePayout, setFirstPlacePayout] = useState(75);
+
+  const [league, setLeague] = useState(null);
+  const [usersById, setUsersById] = useState({});
+  const [rosters, setRosters] = useState([]);
+  const [players, setPlayers] = useState({});
+  const [rawWeeklyMatchups, setRawWeeklyMatchups] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [copyMsg, setCopyMsg] = useState("");
+  const [tab, setTab] = useState("setup");
+
+  const [champion, setChampion] = useState("");
+  const [runnerUp, setRunnerUp] = useState("");
+
+  useEffect(() => {
+    fetch("/config").then((r) => r.json()).then((c) => {
+      setConfig(c);
+      if (!localStorage.getItem("sleeperLeagueId") && c.defaultSleeperLeagueId) {
+        setLeagueId(c.defaultSleeperLeagueId);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (leagueId) localStorage.setItem("sleeperLeagueId", leagueId);
+  }, [leagueId]);
+
+  const settingsKey = leagueId ? `sleeper:${leagueId}` : null;
+
+  function teamName(roster) {
+    if (!roster) return "—";
+    const u = usersById[roster.owner_id];
+    if (u && u.display_name) return u.display_name;
+    const meta = roster.metadata || {};
+    if (meta.team_name) return meta.team_name;
+    return `Team ${roster.roster_id}`;
+  }
+  function teamAvatar(roster) {
+    const u = roster && usersById[roster.owner_id];
+    return u && u.avatar ? `https://sleepercdn.com/avatars/thumbs/${u.avatar}` : null;
+  }
+  const rostersById = Object.fromEntries(rosters.map((r) => [String(r.roster_id), r]));
+  const leagueName = (league && league.name) || config.sleeperAppName || "Sleeper League";
+
+  async function autoSync() {
+    if (!leagueId) { setError("Enter a Sleeper League ID first."); return; }
+    setLoading(true);
+    setError("");
+    try {
+      const lg = await fetch(`/sleeper/league/${leagueId}`).then((r) => r.json());
+      if (lg.error) throw new Error(lg.error);
+      setLeague(lg);
+
+      const us = await fetch(`/sleeper/users/${leagueId}`).then((r) => r.json());
+      if (us.error) throw new Error(us.error);
+      setUsersById(Object.fromEntries((us || []).map((u) => [u.user_id, u])));
+
+      const ro = await fetch(`/sleeper/rosters/${leagueId}`).then((r) => r.json());
+      if (ro.error) throw new Error(ro.error);
+      setRosters(ro || []);
+
+      const pl = await fetch("/sleeper/players").then((r) => r.json());
+      if (pl.error) throw new Error(pl.error);
+      setPlayers(pl || {});
+
+      const slotPositions = (lg.roster_positions || []).filter((s) => s !== "BN");
+      const roById = Object.fromEntries((ro || []).map((r) => [String(r.roster_id), r]));
+
+      const raw = {};
+      for (let w = 1; w <= Number(weeks); w++) {
+        try {
+          const mu = await fetch(`/sleeper/matchups/${leagueId}/${w}`).then((r) => r.json());
+          if (mu.error || !Array.isArray(mu) || mu.length === 0) continue;
+          const played = mu.some((m) => (m.points || 0) > 0);
+          if (played) raw[w] = mu;
+        } catch (e) {}
+      }
+      setRawWeeklyMatchups(raw);
+
+      // shared champion/runner-up picks, namespaced per league so ESPN + other leagues don't collide
+      const s = await fetch("/settings").then((r) => r.json()).catch(() => ({}));
+      const scoped = (settingsKey && s[settingsKey]) || {};
+      setChampion(scoped.champion ? String(scoped.champion) : "");
+      setRunnerUp(scoped.runnerUp ? String(scoped.runnerUp) : "");
+
+      setTab("contests");
+    } catch (e) {
+      setError("Sync failed: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function saveSetting(patch) {
+    fetch("/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }).catch(() => {});
+  }
+  function setChampionShared(id) { setChampion(id); if (settingsKey) saveSetting({ [settingsKey]: { champion: id, runnerUp } }); }
+  function setRunnerUpShared(id) { setRunnerUp(id); if (settingsKey) saveSetting({ [settingsKey]: { champion, runnerUp: id } }); }
+
+  const slotPositions = (league?.roster_positions || []).filter((s) => s !== "BN");
+  const memberCount = rosters.length || 10;
+  const pot = buyIn * memberCount;
+
+  // one winner per week, from that week's active rotating contest
+  const weeklyWinners = Object.keys(rawWeeklyMatchups).sort((a, b) => Number(a) - Number(b)).map((week) => {
+    const w = Number(week);
+    const contest = activeContestForWeek(w);
+    const cfg = contestPool.find((c) => c.id === contest.id) || contest;
+    const stats = computeWeekStats(rawWeeklyMatchups[week], slotPositions, players, rostersById);
+    const result = pickWinner(stats, contest);
+    return { week: w, contest: cfg, result };
+  });
+
+  const latestWeek = weeklyWinners.length ? weeklyWinners[weeklyWinners.length - 1] : null;
+  const totalContestPayouts = weeklyWinners.reduce((s, w) => s + (w.result ? w.contest.payout : 0), 0);
+  const secondPlacePayout = Math.max(pot - totalContestPayouts - firstPlacePayout, 0);
+
+  // net balance per roster
+  const balances = {};
+  rosters.forEach((r) => { balances[String(r.roster_id)] = -buyIn; });
+  weeklyWinners.forEach((w) => {
+    if (w.result && balances[w.result.rosterId] != null) balances[w.result.rosterId] += w.contest.payout;
+  });
+  if (champion && balances[champion] != null) balances[champion] += firstPlacePayout;
+  if (runnerUp && balances[runnerUp] != null) balances[runnerUp] += secondPlacePayout;
+
+  const leaderboard = [...rosters].sort((a, b) => (balances[String(b.roster_id)] || 0) - (balances[String(a.roster_id)] || 0));
+
+  function rosterRecord(r) {
+    const s = r.settings || {};
+    const w = s.wins || 0, l = s.losses || 0, t = s.ties || 0;
+    const pf = (s.fpts || 0) + (s.fpts_decimal || 0) / 100;
+    return { text: `${w}-${l}${t ? `-${t}` : ""}`, pf, wins: w };
+  }
+
+  function copyWeeklyUpdate(latest) {
+    const winnerName = teamName(rostersById[latest.result.rosterId]);
+    const lines = [
+      `🏈 ${leagueName} — Week ${latest.week} Update`,
+      ``,
+      `This week's contest: ${latest.contest.name} (${latest.contest.blurb})`,
+      `Winner: ${winnerName} — ${latest.result.detail} (+$${latest.contest.payout})`,
+      ``,
+      `💰 Pot standings:`,
+      ...leaderboard.slice(0, 3).map((r, i) => `${i + 1}. ${teamName(r)}: ${(balances[String(r.roster_id)] >= 0) ? "+" : ""}${balances[String(r.roster_id)]}`),
+    ];
+    const text = lines.join("\n");
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopyMsg("Copied!");
+      setTimeout(() => setCopyMsg(""), 2000);
+    }).catch(() => {
+      setCopyMsg("Couldn't copy — try again");
+      setTimeout(() => setCopyMsg(""), 2000);
+    });
+  }
+
+  return (
+    <div style={styles.app}>
+      <header style={styles.header}>
+        <div>
+          <div style={styles.eyebrow}>LEAGUE MANAGER · SLEEPER</div>
+          <h1 style={styles.h1}>{leagueName}</h1>
+          <div style={styles.tagline}>Weekly contests &amp; season money, tracked automatically</div>
+          <div style={styles.platformNav}>
+            <span style={styles.platformCurrent}>Sleeper</span>
+            <span style={{ color: TOKENS.muted }}> · </span>
+            <a href="/" style={styles.platformLink}>ESPN leagues →</a>
+          </div>
+        </div>
+        <div style={styles.potBox}>
+          <div style={styles.potLabel}>TOTAL POT</div>
+          <div style={styles.potNumber}>${pot}</div>
+        </div>
+      </header>
+
+      <div style={styles.howItWorks}>
+        This page updates itself from your Sleeper league — nobody needs to enter scores by hand. Just check back after games to see who won this week's contest and who's up or down in the pot.
+      </div>
+
+      <nav style={styles.tabs}>
+        {[
+          { id: "setup", label: "⚙️ Setup" },
+          { id: "contests", label: "🏆 This Week" },
+          { id: "standings", label: "📊 Standings" },
+          { id: "ledger", label: "💰 Money" },
+        ].map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ ...styles.tabBtn, ...(tab === t.id ? styles.tabBtnActive : {}) }}>
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      <main style={styles.main}>
+        {tab === "setup" && (
+          <div style={styles.card}>
+            <div style={styles.helpText}>Sleeper league IDs are season-specific — one ID covers the whole season, no year needed. Find it in the Sleeper app under League Settings.</div>
+            <Row label="Sleeper League ID"><input style={styles.input} value={leagueId} onChange={(e) => setLeagueId(e.target.value.trim())} placeholder="e.g. 1401687707264024576" /></Row>
+            <Row label="Regular season weeks"><input style={styles.input} type="number" value={weeks} onChange={(e) => setWeeks(e.target.value)} /></Row>
+            <Row label="Buy-in per team ($)"><input style={styles.input} type="number" value={buyIn} onChange={(e) => setBuyIn(Number(e.target.value))} /></Row>
+            <Row label="1st place payout ($)"><input style={styles.input} type="number" value={firstPlacePayout} onChange={(e) => setFirstPlacePayout(Number(e.target.value))} /></Row>
+            <div style={{ marginTop: 8, marginBottom: 4, color: TOKENS.muted, fontSize: 13 }}>2nd place gets whatever remains in the pot after weekly contests + 1st place.</div>
+
+            <div style={{ marginTop: 20 }}>
+              <div style={styles.eyebrowSmall}>WEEKLY CONTEST ROTATION — one active per week, in this order</div>
+              {contestPool.map((c, i) => (
+                <div key={c.id} style={styles.contestRow}>
+                  <span style={{ width: 30, color: TOKENS.muted, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{i + 1}</span>
+                  <span style={{ flex: 1 }}>{c.name}</span>
+                  <span style={{ color: TOKENS.muted, fontSize: 12, marginRight: 12 }}>{c.blurb}</span>
+                  <input
+                    style={styles.smallInput}
+                    type="number"
+                    value={c.payout}
+                    onChange={(e) => {
+                      const next = [...contestPool];
+                      next[i] = { ...c, payout: Number(e.target.value) };
+                      setContestPool(next);
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {error && <div style={styles.error}>{error}</div>}
+
+            <button style={{ ...styles.primaryBtn, width: "100%" }} onClick={autoSync} disabled={loading}>
+              {loading ? "Syncing…" : "🔄 Sync League"}
+            </button>
+          </div>
+        )}
+
+        {tab === "contests" && (
+          <div>
+            {rosters.length === 0 && <Empty text="Sync your league from Setup first." />}
+            {rosters.length > 0 && (
+              <div style={styles.helpText}>Each week has one bonus contest, shown big below. Whoever wins it collects that week's prize money automatically — no need to track it yourself.</div>
+            )}
+
+            {latestWeek && (
+              <div style={styles.hero}>
+                <div style={styles.heroEyebrow}>WEEK {latestWeek.week} · THIS WEEK'S CONTEST</div>
+                <div style={styles.heroName}>{latestWeek.contest.name}</div>
+                <div style={styles.heroBlurb}>{latestWeek.contest.blurb}</div>
+                {latestWeek.result ? (
+                  <>
+                    <div style={styles.heroWinner}>
+                      {teamAvatar(rostersById[latestWeek.result.rosterId]) ? (
+                        <img src={teamAvatar(rostersById[latestWeek.result.rosterId])} style={{ ...styles.logo, width: 40, height: 40, margin: 0 }} />
+                      ) : (
+                        <span style={{ ...styles.logoFallback, width: 40, height: 40, fontSize: 14, margin: 0 }}>{(teamName(rostersById[latestWeek.result.rosterId]) || "?").slice(0, 2).toUpperCase()}</span>
+                      )}
+                      <span style={styles.heroWinnerName}>{teamName(rostersById[latestWeek.result.rosterId])}</span>
+                    </div>
+                    <div style={styles.heroDetail}>{latestWeek.result.detail}</div>
+                    <div style={styles.heroAmount}>+${latestWeek.contest.payout}</div>
+                  </>
+                ) : <div style={styles.heroDetail}>No result available for this week.</div>}
+
+                {latestWeek.result && (
+                  <button style={{ ...styles.secondaryBtn, marginTop: 18 }} onClick={() => copyWeeklyUpdate(latestWeek)}>
+                    {copyMsg || "📋 Copy Update for Group Chat"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {weeklyWinners.length > 0 && (
+              <div style={styles.card}>
+                <div style={styles.eyebrowSmall}>SEASON HISTORY</div>
+                {weeklyWinners.slice().reverse().map((w) => (
+                  <div key={w.week} style={styles.historyRow}>
+                    <span style={styles.weekBadge}>WK {w.week}</span>
+                    <span style={{ flex: 1 }}>{w.contest.name}</span>
+                    {w.result ? (
+                      <>
+                        <TeamCell name={teamName(rostersById[w.result.rosterId])} avatar={teamAvatar(rostersById[w.result.rosterId])} />
+                        <span style={{ color: TOKENS.teal, fontFamily: "'IBM Plex Mono', monospace", width: 40, textAlign: "right" }}>+${w.contest.payout}</span>
+                      </>
+                    ) : <span style={{ color: TOKENS.muted }}>—</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === "standings" && (
+          <div style={styles.card}>
+            {rosters.length === 0 && <Empty text="Sync your league from Setup first." />}
+            {rosters.length > 0 && (
+              <>
+                <table style={styles.table}>
+                  <thead><tr><th style={styles.th}>#</th><th style={styles.th}>Team</th><th style={styles.th}>Record</th><th style={styles.th}>PF</th></tr></thead>
+                  <tbody>
+                    {[...rosters].sort((a, b) => (rosterRecord(b).wins - rosterRecord(a).wins) || (rosterRecord(b).pf - rosterRecord(a).pf)).map((r, i) => {
+                      const rec = rosterRecord(r);
+                      return (
+                        <tr key={r.roster_id}>
+                          <td style={styles.td}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}</td>
+                          <td style={styles.td}><TeamCell name={teamName(r)} avatar={teamAvatar(r)} /></td>
+                          <td style={styles.td}>{rec.text}</td>
+                          <td style={styles.td}>{rec.pf.toFixed(1)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <div style={{ marginTop: 20, color: TOKENS.muted, fontSize: 13 }}>Regular season order shown above — playoffs decide the actual champion, so set it manually (shared with everyone viewing this dashboard):</div>
+                <Row label="Champion (1st)">
+                  <select style={styles.input} value={champion} onChange={(e) => setChampionShared(e.target.value)}>
+                    <option value="">— select —</option>
+                    {rosters.map((r) => <option key={r.roster_id} value={String(r.roster_id)}>{teamName(r)}</option>)}
+                  </select>
+                </Row>
+                <Row label="Runner-up (2nd)">
+                  <select style={styles.input} value={runnerUp} onChange={(e) => setRunnerUpShared(e.target.value)}>
+                    <option value="">— select —</option>
+                    {rosters.map((r) => <option key={r.roster_id} value={String(r.roster_id)}>{teamName(r)}</option>)}
+                  </select>
+                </Row>
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === "ledger" && (
+          <div>
+            <div style={styles.summaryGrid}>
+              <SummaryTile label="Pot" value={`$${pot}`} />
+              <SummaryTile label="Paid out in contests" value={`$${totalContestPayouts}`} />
+              <SummaryTile label="1st / 2nd" value={`$${firstPlacePayout} / $${secondPlacePayout}`} accent />
+            </div>
+
+            <div style={styles.card}>
+              <div style={styles.eyebrowSmall}>WHO OWES WHAT</div>
+              <div style={styles.helpText}>
+                Everyone starts at <strong>-${buyIn}</strong> for their buy-in. Winning a weekly contest or a season prize adds to that.
+                {" "}<span style={{ color: TOKENS.teal }}>Green</span> means they're ahead. <span style={{ color: TOKENS.red }}>Red</span> means they still owe money into the pot.
+              </div>
+              {rosters.length === 0 && <Empty text="Sync your league from Setup first." />}
+              <table style={styles.table}>
+                <thead><tr><th style={styles.th}>Team</th><th style={styles.th}>Owed / Owes ($)</th></tr></thead>
+                <tbody>
+                  {leaderboard.map((r) => {
+                    const bal = balances[String(r.roster_id)] || 0;
+                    return (
+                      <tr key={r.roster_id}>
+                        <td style={styles.td}><TeamCell name={teamName(r)} avatar={teamAvatar(r)} /></td>
+                        <td style={{ ...styles.td, fontFamily: "'IBM Plex Mono', monospace", color: bal > 0 ? TOKENS.teal : bal < 0 ? TOKENS.red : TOKENS.muted, fontWeight: 600 }}>
+                          {bal > 0 ? "+" : ""}{bal}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<SleeperDashboard />);
+</script>
+</body>
+</html>
