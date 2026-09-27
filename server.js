@@ -60,6 +60,17 @@ app.get("/week/:leagueId/:year/:week", async (req, res) => {
   }
 });
 
+app.get("/league-settings/:leagueId/:year", async (req, res) => {
+  const { leagueId, year } = req.params;
+  try {
+    const r = await fetch(`${BASE}/${year}/segments/0/leagues/${leagueId}?view=mSettings`, { headers: ESPN_HEADERS });
+    if (!r.ok) return res.status(r.status).json({ error: `ESPN returned ${r.status}` });
+    res.json(await r.json());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---------- deployment config (lets one codebase serve multiple leagues) ----------
 app.get("/config", (req, res) => {
   res.json({
