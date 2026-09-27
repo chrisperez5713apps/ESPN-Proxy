@@ -268,6 +268,7 @@ function LeagueDashboard() {
       if (c.espnAppName) setAppName(c.espnAppName);
       if (c.defaultBuyIn) setBuyIn(Number(c.defaultBuyIn));
       if (c.defaultWeeklyPayout) setContestPool(CONTEST_POOL.map((x) => ({ ...x, payout: Number(c.defaultWeeklyPayout) })));
+      if (c.defaultFirstPlacePayout) setFirstPlacePayout(Number(c.defaultFirstPlacePayout));
       if (!localStorage.getItem("leagueId") && c.defaultEspnLeagueId) setLeagueId(c.defaultEspnLeagueId);
       if (!localStorage.getItem("year") && c.defaultEspnYear) setYear(c.defaultEspnYear);
     }).catch(() => {});

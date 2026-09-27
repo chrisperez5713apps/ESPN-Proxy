@@ -257,6 +257,7 @@ function SleeperDashboard() {
       setConfig(c);
       if (c.defaultBuyIn) setBuyIn(Number(c.defaultBuyIn));
       if (c.defaultWeeklyPayout) setContestPool(CONTEST_POOL.map((x) => ({ ...x, payout: Number(c.defaultWeeklyPayout) })));
+      if (c.defaultFirstPlacePayout) setFirstPlacePayout(Number(c.defaultFirstPlacePayout));
       if (!localStorage.getItem("sleeperLeagueId") && c.defaultSleeperLeagueId) {
         setLeagueId(c.defaultSleeperLeagueId);
       }

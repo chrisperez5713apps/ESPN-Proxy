@@ -40,4 +40,6 @@ services:
         value: "10"
       - key: DEFAULT_WEEKLY_PAYOUT
         value: "2.5"
+      - key: DEFAULT_FIRST_PLACE_PAYOUT
+        value: "40"
       # ESPN cookies not needed here, but harmless to leave unset

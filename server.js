@@ -70,6 +70,7 @@ app.get("/config", (req, res) => {
     defaultSleeperLeagueId: process.env.DEFAULT_SLEEPER_LEAGUE_ID || "",
     defaultBuyIn: process.env.DEFAULT_BUY_IN || "",
     defaultWeeklyPayout: process.env.DEFAULT_WEEKLY_PAYOUT || "",
+    defaultFirstPlacePayout: process.env.DEFAULT_FIRST_PLACE_PAYOUT || "",
   });
 });
 
