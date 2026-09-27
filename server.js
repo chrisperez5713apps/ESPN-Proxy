@@ -69,6 +69,7 @@ app.get("/config", (req, res) => {
     defaultEspnYear: process.env.DEFAULT_ESPN_YEAR || "2026",
     defaultSleeperLeagueId: process.env.DEFAULT_SLEEPER_LEAGUE_ID || "",
     defaultBuyIn: process.env.DEFAULT_BUY_IN || "",
+    defaultWeeklyPayout: process.env.DEFAULT_WEEKLY_PAYOUT || "",
   });
 });
 

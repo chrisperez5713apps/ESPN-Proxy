@@ -38,4 +38,6 @@ services:
         value: "1401687707264024576"
       - key: DEFAULT_BUY_IN
         value: "10"
+      - key: DEFAULT_WEEKLY_PAYOUT
+        value: "2.5"
       # ESPN cookies not needed here, but harmless to leave unset
