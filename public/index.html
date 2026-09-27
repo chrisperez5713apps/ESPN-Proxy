@@ -266,6 +266,7 @@ function LeagueDashboard() {
   useEffect(() => {
     fetch("/config").then((r) => r.json()).then((c) => {
       if (c.espnAppName) setAppName(c.espnAppName);
+      if (c.defaultBuyIn) setBuyIn(Number(c.defaultBuyIn));
       if (!localStorage.getItem("leagueId") && c.defaultEspnLeagueId) setLeagueId(c.defaultEspnLeagueId);
       if (!localStorage.getItem("year") && c.defaultEspnYear) setYear(c.defaultEspnYear);
     }).catch(() => {});

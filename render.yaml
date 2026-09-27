@@ -36,4 +36,6 @@ services:
         value: The PCB League
       - key: DEFAULT_SLEEPER_LEAGUE_ID
         value: "1401687707264024576"
+      - key: DEFAULT_BUY_IN
+        value: "10"
       # ESPN cookies not needed here, but harmless to leave unset

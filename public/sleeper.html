@@ -255,6 +255,7 @@ function SleeperDashboard() {
   useEffect(() => {
     fetch("/config").then((r) => r.json()).then((c) => {
       setConfig(c);
+      if (c.defaultBuyIn) setBuyIn(Number(c.defaultBuyIn));
       if (!localStorage.getItem("sleeperLeagueId") && c.defaultSleeperLeagueId) {
         setLeagueId(c.defaultSleeperLeagueId);
       }
